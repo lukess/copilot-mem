@@ -1,0 +1,40 @@
+{
+  "name": "copilot-mem",
+  "version": "0.1.0",
+  "description": "Persistent cross-session memory for GitHub Copilot CLI",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "copilot-mem": "dist/copilot-mem.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "docs/",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=26.0.0",
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "build": "bun build src/cli.ts --target=node --format=esm --banner='#!/usr/bin/env node' --outfile=dist/copilot-mem.js && chmod +x dist/copilot-mem.js",
+    "prepack": "bun run build",
+    "sync": "bun src/cli.ts sync",
+    "compress": "bun src/cli.ts compress",
+    "stats": "bun src/cli.ts stats",
+    "mcp": "bun src/cli.ts mcp",
+    "status": "bun src/cli.ts status",
+    "test": "bun test",
+    "test:node": "node --test \"tests/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "bench": "bun scripts/bench-embeddings.ts"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}

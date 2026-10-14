@@ -1,0 +1,15 @@
+copilot-mem
+Copyright 2026 The copilot-mem authors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes software adapted from Claude-Mem
+(https://github.com/thedotmack/claude-mem), Copyright 2026 Alex Newman,
+licensed under the Apache License, Version 2.0:
+
+- src/rank/reinforcement.ts: adapted from src/services/reinforcement
+  (strength.ts, rank.ts).
+- src/dedup/near-duplicate.ts: ported from src/services/dedup.
+
+The design (observations, the search / timeline / get_observations recall
+workflow, session summaries, settings file and viewer) follows Claude-Mem.

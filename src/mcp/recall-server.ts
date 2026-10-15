@@ -1,6 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { QueryEmbedder, QueryVector } from '../search/embeddings.ts';
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { bookmarkAnswer } from '../bookmark.ts';
 import { formatSummary } from '../compress/summary.ts';
 import { MAX_FACTS, MAX_TEXT, MAX_TITLE, rememberNote } from '../remember.ts';
 import {
@@ -21,7 +22,8 @@ earlier work or when past context would help. Work in three steps to save contex
 2. timeline -> what happened around an interesting ID
 3. get_observations -> full details, only for the IDs you need
 summaries gives per-session recaps (request, what was done, next steps): useful to resume earlier work.
-When the user asks you to remember something, save it with remember (type "note").`;
+When the user asks you to remember something, save it with remember (type "note").
+When the user asks to bookmark or keep an answer you gave, call bookmark: it saves your previous answer word for word.`;
 
 const PROJECT_PROP = {
   type: 'string',
@@ -108,6 +110,24 @@ const TOOLS = [
       required: ['title', 'text'],
     },
   },
+  {
+    name: 'bookmark',
+    description:
+      'Bookmark an answer from this session when the user asks to bookmark, star or keep it. Saves the question and your ' +
+      'answer word for word (no rewriting), with the repository and path; search finds bookmarks from any project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', maxLength: MAX_TITLE, description: 'Short title; defaults to the first line of the question' },
+        back: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 50,
+          description: 'Which earlier answer: 1 (default) is the answer just before the bookmark request, 2 the one before that',
+        },
+      },
+    },
+  },
 ];
 
 class ArgumentError extends Error {}
@@ -176,7 +196,13 @@ function line(o: ObservationSummary, marker = ''): string {
 
 function detail(o: ObservationDetail): string {
   const turns = o.first_turn === o.last_turn ? `turn ${o.first_turn}` : `turns ${o.first_turn}-${o.last_turn}`;
-  const source = o.session_id.startsWith(MANUAL_SESSION_PREFIX) ? 'saved by the user' : `session ${o.session_id}, ${turns}`;
+  const source = o.session_id.startsWith(MANUAL_SESSION_PREFIX)
+    ? 'saved by the user'
+    : `${o.type === 'bookmark' ? 'bookmarked from ' : ''}session ${o.session_id}, ${turns}`;
+  if (o.type === 'bookmark') {
+    // The answer is shown exactly as saved; the question replaces the truncated subtitle.
+    return [`#${o.id} [bookmark] ${o.title}`, `when: ${o.occurred_at} | project: ${projectOf(o)}${o.cwd && o.cwd !== projectOf(o) ? ` | path: ${o.cwd}` : ''}${o.branch ? ` (branch ${o.branch})` : ''} | ${source}`, `Question:\n${o.question ?? o.subtitle ?? ''}`, `Answer:\n${o.narrative}`].join('\n');
+  }
   const parts = [
     `#${o.id} [${o.type}] ${o.title}${o.subtitle ? ` | ${o.subtitle}` : ''}`,
     `when: ${o.occurred_at} | project: ${projectOf(o)}${o.branch ? ` (branch ${o.branch})` : ''} | ${source}`,
@@ -199,11 +225,24 @@ function detail(o: ObservationDetail): string {
 
 const text = (body: string, isError = false): CallToolResult => ({ content: [{ type: 'text', text: body }], isError });
 
+/** The Copilot session the server runs in, for bookmark. */
+export interface CurrentSession {
+  id?: string;
+  stateDir: string;
+}
+
 /**
  * `vector` is the embedded `query` (search/timeline), enabling hybrid keyword + semantic ranking.
  * `cwd` picks the default project for remember (Copilot starts the server in the session's directory).
  */
-export function callRecallTool(store: MemoryStore, name: string, args: Args = {}, vector?: QueryVector, cwd = process.cwd()): CallToolResult {
+export function callRecallTool(
+  store: MemoryStore,
+  name: string,
+  args: Args = {},
+  vector?: QueryVector,
+  cwd = process.cwd(),
+  session?: CurrentSession,
+): CallToolResult {
   try {
     switch (name) {
       case 'search': {
@@ -283,6 +322,18 @@ export function callRecallTool(store: MemoryStore, name: string, args: Args = {}
         }
         return text(`Saved note #${saved.id} for ${saved.project}.`);
       }
+      case 'bookmark': {
+        const title = optString(args, 'title');
+        const back = optInt(args, 'back', 1, 1, 50);
+        if (!session?.id) return text('Cannot bookmark: the Copilot session ID is unknown (COPILOT_AGENT_SESSION_ID is not set).', true);
+        let saved;
+        try {
+          saved = bookmarkAnswer(store, { sessionId: session.id, title, skipCurrent: true, back, sessionStateDir: session.stateDir });
+        } catch (error) {
+          return text(`Cannot bookmark: ${(error as Error).message}`, true);
+        }
+        return text(`${saved.created ? 'Bookmarked' : saved.title === title ? 'Already bookmarked; renamed' : 'Already bookmarked'}: #${saved.id} "${saved.title}" (${saved.project}, turn ${saved.turnIndex}).`);
+      }
       default:
         return text(`Unknown tool: ${name}`, true);
     }
@@ -292,14 +343,14 @@ export function callRecallTool(store: MemoryStore, name: string, args: Args = {}
   }
 }
 
-export function createRecallServer(store: MemoryStore, version: string, embedQuery?: QueryEmbedder): Server {
+export function createRecallServer(store: MemoryStore, version: string, embedQuery?: QueryEmbedder, session?: CurrentSession): Server {
   const server = new Server({ name: 'copilot-mem', version }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params;
     const query = typeof args.query === 'string' && (name === 'search' || name === 'timeline') ? args.query : undefined;
     const vector = query && embedQuery ? await embedQuery(query) : undefined;
-    return callRecallTool(store, name, args, vector);
+    return callRecallTool(store, name, args, vector, process.cwd(), session);
   });
   return server;
 }

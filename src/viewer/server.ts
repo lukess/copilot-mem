@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { bookmarkAnswer } from '../bookmark.ts';
 import { buildSessionContext, CONTEXT_BUDGET } from '../hooks/context.ts';
 import { linkProjects, unlinkProjects } from '../links.ts';
 import type { QueryEmbedder } from '../search/embeddings.ts';
@@ -293,11 +294,11 @@ export async function startViewer(options: ViewerOptions): Promise<Viewer> {
     throw new HttpError(404, 'not found');
   };
 
-  /** Dashboard curation: add notes; edit, pin and delete observations; link and unlink projects. */
+  /** Dashboard curation: add notes and bookmarks; edit, pin and delete observations; link and unlink projects. */
   const mutate = async (req: IncomingMessage, res: ServerResponse, path: string, port: number): Promise<void> => {
     const target = /^\/api\/observations\/(\d+)(?:\/(pin|delete))?$/.exec(path);
     const links = path === '/api/links' || path === '/api/links/delete';
-    if (path !== '/api/notes' && !links && !target) throw new HttpError(405, 'method not allowed');
+    if (path !== '/api/notes' && path !== '/api/bookmarks' && !links && !target) throw new HttpError(405, 'method not allowed');
     checkAction(req, port);
     const body = await readJson(req);
     const now = new Date().toISOString();
@@ -329,6 +330,18 @@ export async function startViewer(options: ViewerOptions): Promise<Viewer> {
         throw error instanceof HttpError ? error : new HttpError(400, (error as Error).message);
       }
     }
+    if (path === '/api/bookmarks') {
+      const sessionId = text(body, 'session_id', 200, true);
+      const turnIndex = body.turn_index;
+      if (typeof turnIndex !== 'number' || !Number.isInteger(turnIndex) || turnIndex < 0) throw new HttpError(400, 'turn_index must be a non-negative integer');
+      try {
+        const saved = bookmarkAnswer(store, { sessionId, turnIndex, title: text(body, 'title', MAX_TITLE, false) || undefined, sessionStateDir: '' }, now);
+        (options.log ?? (() => {}))(`viewer: bookmarked session ${sessionId} turn ${turnIndex} as #${saved.id}`);
+        return sendJson(res, saved.created ? 201 : 200, saved);
+      } catch (error) {
+        throw new HttpError(400, (error as Error).message);
+      }
+    }
     const id = Number(target![1]);
     let found: boolean;
     if (target![2] === 'delete') {
@@ -339,15 +352,20 @@ export async function startViewer(options: ViewerOptions): Promise<Viewer> {
     } else {
       const type = body.type;
       if (typeof type !== 'string' || !OBSERVATION_TYPES.includes(type as ObservationType)) throw new HttpError(400, `unknown type: ${String(type)}`);
+      const current = store.getObservations([id])[0];
+      if (current && (current.type === 'bookmark') !== (type === 'bookmark')) throw new HttpError(400, 'bookmarks cannot change type');
+      // A bookmark keeps its answer word for word; only the title can change.
       found = store.updateObservation(
         id,
-        {
-          type: type as ObservationType,
-          title: text(body, 'title', MAX_TITLE, true),
-          subtitle: text(body, 'subtitle', MAX_TITLE * 2, false),
-          narrative: text(body, 'narrative', MAX_TEXT, true),
-          facts: factList(body),
-        },
+        current?.type === 'bookmark'
+          ? { type: 'bookmark', title: text(body, 'title', MAX_TITLE, true), subtitle: current.subtitle, narrative: current.narrative, facts: current.facts }
+          : {
+              type: type as ObservationType,
+              title: text(body, 'title', MAX_TITLE, true),
+              subtitle: text(body, 'subtitle', MAX_TITLE * 2, false),
+              narrative: text(body, 'narrative', MAX_TEXT, true),
+              facts: factList(body),
+            },
         now,
       );
     }

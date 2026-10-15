@@ -257,7 +257,7 @@ describe('MCP server', () => {
       assert.deepEqual(client.getServerVersion(), { name: 'copilot-mem', version: '9.9.9' });
       assert.match(client.getInstructions() ?? '', /search -> .*timeline -> .*get_observations/s);
       const { tools } = await client.listTools();
-      assert.deepEqual(tools.map((t) => t.name), ['search', 'timeline', 'get_observations', 'summaries', 'remember']);
+      assert.deepEqual(tools.map((t) => t.name), ['search', 'timeline', 'get_observations', 'summaries', 'remember', 'bookmark']);
       const result = await client.callTool({ name: 'search', arguments: { query: 'shards' } });
       assert.match(text(result), /#4 .*Redis cluster uses three shards/);
     } finally {

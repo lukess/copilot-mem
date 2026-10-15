@@ -46,7 +46,8 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   .type { font-size:10px; text-transform:uppercase; padding:0 5px; border-radius:4px; background:#30363d; }
   .type.decision { background:#1f3a5f; } .type.bugfix { background:#5a1e1e; } .type.feature { background:#1e4a2a; }
   .type.refactor { background:#3d2e5c; } .type.change { background:#4a3b12; } .type.discovery { background:#12404a; }
-  .type.note { background:#5c3a12; }
+  .type.note { background:#5c3a12; } .type.bookmark { background:#5c4a00; }
+  button.star { border:0; background:none; padding:0 4px; color:var(--dim); cursor:pointer; font-size:14px; } button.star.on { color:#e3b341; }
   .proj { display:flex; justify-content:space-between; gap:8px; }
   .proj .n { color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
   .proj .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
@@ -152,7 +153,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
 </footer>
 <script>
 "use strict";
-var TYPES = ["decision", "bugfix", "feature", "refactor", "change", "discovery", "note"];
+var TYPES = ["decision", "bugfix", "feature", "refactor", "change", "discovery", "note", "bookmark"];
 var PAGE = 50;
 var state = { project: "", type: "", q: "", items: [], done: false, selected: null, latest: null, seen: 0, projects: [], pq: "", snap: null, stats: null, latestCall: undefined, view: "", mode: "obs", recall: null, from: "", to: "", activity: null };
 
@@ -320,9 +321,10 @@ function select(id) {
           o.pinned_at ? "Unpin" : "Pin"),
         h("button", { onclick: function () { renderEdit(o); } }, "Edit"),
         h("button", { class: "danger", onclick: function () { removeObservation(o); } }, "Delete")),
-      o.subtitle ? h("p", { class: "dim" }, o.subtitle) : null,
+      o.type === "bookmark" ? [h("h4", null, "Question"), pre(o.question || o.subtitle, "user"), h("h4", null, "Answer (word for word)"), pre(o.narrative)]
+        : o.subtitle ? h("p", { class: "dim" }, o.subtitle) : null,
       o.concepts.length ? h("div", { class: "meta" }, o.concepts.map(function (c) { return h("span", { class: "type" }, c); })) : null,
-      h("p", null, o.narrative),
+      o.type === "bookmark" ? null : h("p", null, o.narrative),
       o.facts.length ? [h("h4", null, "Facts"), h("ul", null, o.facts.map(function (f) { return h("li", null, f); }))] : null,
       o.files.length ? [h("h4", null, o.type === "note" ? "Files" : "Files modified"), h("ul", null, o.files.map(function (f) { return h("li", null, h("code", null, f)); }))] : null,
       o.files_read.length ? [h("h4", null, "Files read"), h("ul", null, o.files_read.map(function (f) { return h("li", null, h("code", null, f)); }))] : null,
@@ -375,7 +377,14 @@ function renderForm(title, note, fields, onSave) {
 function lines(text) { return text.split("\n").map(function (l) { return l.trim(); }).filter(Boolean); }
 function renderEdit(o) {
   state.view = "edit";
-  var type = h("select", null, TYPES.map(function (t) { return h("option", { value: t }, t); }));
+  if (o.type === "bookmark") {
+    var name = h("input", { value: o.title, maxlength: "120", required: "" });
+    renderForm("Edit bookmark #" + o.id, "A bookmark keeps the answer word for word; only its title can change.", [field("title", name)], function () {
+      return post("/api/observations/" + o.id, { type: "bookmark", title: name.value }).then(function () { return afterChange(o.id); });
+    });
+    return;
+  }
+  var type = h("select", null, TYPES.filter(function (t) { return t !== "bookmark"; }).map(function (t) { return h("option", { value: t }, t); }));
   type.value = o.type;
   var title = h("input", { value: o.title, maxlength: "120", required: "" });
   var subtitle = h("input", { value: o.subtitle || "" });
@@ -502,11 +511,20 @@ function openSession(id, from, to) {
   if (state.mode === "sessions") renderList();
   fill($("detail"), h("div", { class: "empty" }, "Loading\u2026"));
   api("/api/sessions/" + encodeURIComponent(id)).then(function (d) {
-    var s = d.session, box = $("detail"), target = null;
+    var s = d.session, box = $("detail"), target = null, marked = {};
+    d.bookmarks.forEach(function (b) { marked[b.turn_index] = b.observation_id; });
     var turns = d.turns.map(function (t) {
       var hl = from != null && t.turn_index >= from && t.turn_index <= to;
+      var bid = marked[t.turn_index];
+      var star = !t.assistant_response ? null : h("button", { class: "star" + (bid ? " on" : ""),
+        title: bid ? "Bookmarked as #" + bid + " (open it)" : "Bookmark this answer (saved word for word; found by search from any project)",
+        onclick: function (e) {
+          e.preventDefault(); e.stopPropagation();
+          if (bid) { select(bid); return; }
+          post("/api/bookmarks", { session_id: s.id, turn_index: t.turn_index }).then(function () { openSession(s.id, t.turn_index, t.turn_index); }).catch(fail);
+        } }, bid ? "\u2605" : "\u2606");
       var el = h("details", { class: "turn" + (hl ? " hl" : "") },
-        h("summary", null, h("span", { class: "dim" }, "#" + t.turn_index + " " + (t.timestamp ? new Date(t.timestamp).toLocaleString() : "") +
+        h("summary", null, star, h("span", { class: "dim" }, "#" + t.turn_index + " " + (t.timestamp ? new Date(t.timestamp).toLocaleString() : "") +
           (t.compressed ? "" : " \u00b7 pending") + " \u00b7 "), (t.user_message || "").slice(0, 160)),
         pre(t.user_message, "user"), pre(t.assistant_response));
       if (hl) { el.open = true; if (!target) target = el; }

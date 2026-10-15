@@ -9,8 +9,8 @@ description: Recall decisions, bug fixes, features, and discoveries from past Gi
 
 copilot-mem keeps a searchable memory of earlier Copilot CLI sessions. Each memory is an
 *observation* (type: decision, bugfix, feature, refactor, change, or discovery) summarized from
-past conversation turns, tagged with its repository and directory, or a *note* (type: note) the
-user asked to remember.
+past conversation turns, tagged with its repository and directory, a *note* (type: note) the
+user asked to remember, or a *bookmark* (type: bookmark): an earlier answer saved word for word.
 
 ## Workflow (saves context: fetch details last)
 
@@ -28,6 +28,11 @@ investigated, learned and completed, next steps), newest first.
 When the user asks you to remember something ("remember that...", "note for next time"), call
 \`copilot-mem-remember\` with a short \`title\` and self-contained \`text\`. It is saved for the
 current repository (or pass \`project\`) and is never changed by compression.
+
+When the user asks to bookmark, star or keep an answer you gave ("bookmark that"), call
+\`copilot-mem-bookmark\` (optional \`title\`; \`back: 2\` for the answer before the last one). It
+saves the question and your answer exactly, with the repository and path. Search returns
+bookmarks from any project; quote a bookmark's answer as saved rather than paraphrasing it.
 
 ## Tips
 

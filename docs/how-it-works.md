@@ -113,7 +113,9 @@ A live web viewer (like claude-mem's):
   context for their project, however old; up to 10. Edits replace the
   compressed text and re-embed it. Delete removes it from search and context
   but keeps the session's raw turns. **+ Note** saves a note to a project, like
-  the `remember` tool. These POST actions need the dashboard's own header, so
+  the `remember` tool. ☆ next to a session turn bookmarks its answer (★ opens
+  the bookmark); a bookmark's title can be edited, its text cannot. These POST
+  actions need the dashboard's own header, so
   other sites can't trigger them.
 - **Context**: with a project selected, previews what the sessionStart hook
   would inject into a new session there now, and its size against the budget.
@@ -398,6 +400,25 @@ session-start context and the dashboard (labeled "saved by you"), and are
 embedded for semantic search. `copilot-mem remember <title> <text> [--fact F]...
 [--file F]... [--project P]` does the same from a shell.
 
+And `bookmark` (`title`, `back`), for when you ask Copilot to bookmark an
+answer. It saves one exchange word for word: an observation of type
+`bookmark` whose narrative is the full answer, plus a `bookmarks` row with
+the question. It belongs to the session it came from, so it keeps the
+repository, path, branch and turn link. The tool reads the live session's
+`events.jsonl` (the server knows the session from `COPILOT_AGENT_SESSION_ID`),
+because Copilot's session store gets the turn only later. It skips the
+request asking for the bookmark and subagent messages, and takes the
+exchange's last answer text; `back: 2` picks the answer before that. The turn
+index comes from the synced turn with the same answer, or else the
+exchange's position. Saving the same answer again keeps one bookmark.
+
+Bookmarks are global: a search filtered to a project also returns bookmarks
+from other projects, each showing where it came from. They are never in
+session-start context, summarized, or used as dedup merge targets.
+`copilot-mem bookmark [--title T] [--back N] [--session ID] [--turn N]` does
+the same from a shell (default: the newest answer of the most recently active
+session), and `copilot-mem bookmarks [query]` lists them.
+
 - `project` is a repository (`owner/name`) or a directory. A directory also
   matches sessions in its subdirectories.
 - Dates are when the summarized turns happened, not when they were compressed.
@@ -416,7 +437,8 @@ copilot --additional-mcp-config @/tmp/copilot-mem-mcp.json
 ```
 
 Copilot exposes the tools as `copilot-mem-search`, `copilot-mem-timeline`,
-`copilot-mem-get_observations`, `copilot-mem-summaries` and `copilot-mem-remember`.
+`copilot-mem-get_observations`, `copilot-mem-summaries`, `copilot-mem-remember` and
+`copilot-mem-bookmark`.
 
 ## VS Code
 

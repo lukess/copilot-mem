@@ -90,6 +90,7 @@ directly:
 > *"What did we decide about the retry logic last week?"*
 > *"Search memory for the OTLP port issue."*
 > *"Remember that this repo uses pnpm workspaces."*
+> *"Bookmark that answer."*
 
 Copilot uses these tools (they are prefixed `copilot-mem-`):
 
@@ -100,9 +101,16 @@ Copilot uses these tools (they are prefixed `copilot-mem-`):
 | `get_observations` | Full details for chosen IDs |
 | `summaries` | Session recaps |
 | `remember` | Save a note you asked for |
+| `bookmark` | Save Copilot's previous answer word for word |
 
 Searching first and fetching details only for the right IDs keeps Copilot's
 context small, the same approach claude-mem uses.
+
+**Bookmarks.** When an answer is worth keeping exactly as written, say
+*"bookmark that"* (or run `copilot-mem bookmark`, or click ☆ next to a turn in
+the dashboard). The question and answer are saved word for word, with the
+repository, path and branch they came from. Bookmarks are global: search
+finds them from any project. They are not added to the session-start recap.
 
 **Related projects.** If you often work on two repos together (say an app and
 its API), link them so each one's recap includes the other's recent work:
@@ -127,7 +135,8 @@ A local web page to browse and manage your memory:
 - **Open an observation** to see its facts, files, and the conversation it
   came from.
 - **Pin** important observations so they always appear in the recap; **Edit**
-  or **Delete** wrong ones; add a **+ Note**.
+  or **Delete** wrong ones; add a **+ Note**; ☆ a session turn to bookmark
+  its answer.
 - **Context** previews the exact recap a new session in a project would get.
 - **Activity** shows a heatmap of your work; **Export** downloads what you
   filtered as Markdown (handy for a work summary).
@@ -179,6 +188,7 @@ real usage. Search, the dashboard and local or ollama embeddings cost nothing.
 | `copilot-mem compress --limit N` | Summarize pending turns now (at most N Copilot calls) |
 | `copilot-mem summarize` | Summarize finished older sessions |
 | `copilot-mem remember "title" "text"` | Save a note |
+| `copilot-mem bookmark [--title T] [--back N]` / `bookmarks [query]` | Bookmark the latest Copilot answer / list bookmarks |
 | `copilot-mem link A B` / `unlink A B` / `links` | Manage related projects |
 | `copilot-mem embed [--setup]` | Embed all observations for meaning-based search (`--setup` installs the local model first) |
 | `copilot-mem settings` | Show settings and where each comes from |

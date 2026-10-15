@@ -225,16 +225,34 @@ export const MIGRATIONS = [
   `ALTER TABLE observations ADD COLUMN pinned_at TEXT;
    ALTER TABLE observations ADD COLUMN edited_at TEXT;
    CREATE INDEX idx_observations_pinned ON observations(pinned_at) WHERE pinned_at IS NOT NULL;`,
+  // 15: bookmarked answers, kept word for word. The observation (type "bookmark") makes them searchable.
+  `CREATE TABLE bookmarks (
+     observation_id INTEGER PRIMARY KEY,
+     session_id TEXT NOT NULL,
+     turn_index INTEGER NOT NULL,
+     question TEXT NOT NULL,
+     answer TEXT NOT NULL,
+     created_at TEXT NOT NULL,
+     UNIQUE (session_id, turn_index)
+   );
+   CREATE TRIGGER bookmarks_cleanup AFTER DELETE ON observations BEGIN
+     DELETE FROM bookmarks WHERE observation_id = old.id;
+   END;`,
 ];
 
 export type UpsertResult = 'inserted' | 'updated' | 'unchanged';
 
 /** Types the compressor may produce. */
 export const COMPRESSED_TYPES = ['decision', 'bugfix', 'feature', 'refactor', 'change', 'discovery'] as const;
-/** `note` is a user-authored memory (remember); compression never produces or changes one. */
-export const OBSERVATION_TYPES = [...COMPRESSED_TYPES, 'note'] as const;
+/**
+ * `note` is a user-authored memory (remember); `bookmark` is an answer the user kept word for word.
+ * Compression never produces or changes either.
+ */
+export const OBSERVATION_TYPES = [...COMPRESSED_TYPES, 'note', 'bookmark'] as const;
 /** Manual notes belong to a synthetic session per project, so all project scoping applies to them. */
 export const MANUAL_SESSION_PREFIX = 'manual:';
+/** Bookmarked answers are longer than notes; this only guards against runaway input. */
+export const MAX_BOOKMARK_TEXT = 200_000;
 export type ObservationType = (typeof OBSERVATION_TYPES)[number];
 
 /** claude-mem's knowledge-type tags (code mode). */
@@ -357,6 +375,8 @@ export interface SearchFilter {
   dateEnd?: string;
   /** Only observations the user pinned. */
   pinned?: boolean;
+  /** With `project`: leave out bookmarks from other projects (they otherwise match everywhere). */
+  localOnly?: boolean;
   limit: number;
   offset: number;
 }
@@ -465,6 +485,8 @@ export interface SessionDetail {
   turns: SessionTurn[];
   injections: ContextInjection[];
   recallCalls: RecallCall[];
+  /** Bookmarked turns, with their observation IDs. */
+  bookmarks: { turn_index: number; observation_id: number }[];
 }
 
 export interface RecallOverview {
@@ -538,6 +560,8 @@ export interface ObservationDetail extends ObservationSummary, Observation {
   last_seen_at: string | null;
   /** When the user last edited it in the dashboard, else null. */
   edited_at: string | null;
+  /** Bookmarks only: the question, word for word (the narrative holds the answer). */
+  question?: string;
   /** Near-duplicate observations in the same project, best match first. */
   similar: SimilarObservation[];
   /** Files Copilot's tools touched during the observation's turns. */
@@ -607,7 +631,8 @@ function filterClause(filter: SearchFilter): { where: string[]; params: SQLInput
   const params: SQLInputValue[] = [];
   const projects = [filter.project ?? []].flat().filter(Boolean);
   if (projects.length) {
-    where.push(`(${projects.map(() => PROJECT_CLAUSE).join(' OR ')})`);
+    // Bookmarks are global: found from any project, while still showing where they came from.
+    where.push(`(${projects.map(() => PROJECT_CLAUSE).join(' OR ')}${filter.localOnly ? '' : " OR o.type = 'bookmark'"})`);
     params.push(...projects.flatMap(projectParams));
   }
   if (filter.type) {
@@ -806,6 +831,7 @@ export class MemoryStore {
         .prepare(
           `SELECT o.id, o.title FROM observations o LEFT JOIN sessions s ON s.id = o.session_id
            WHERE ${PROJECT_KEY} = (SELECT ${PROJECT_KEY} FROM (SELECT ? AS id) x LEFT JOIN sessions s ON s.id = x.id)
+             AND o.type <> 'bookmark'
            ORDER BY o.id`,
         )
         .all(sessionId) as { id: number; title: string }[]
@@ -895,7 +921,7 @@ export class MemoryStore {
     limit: number;
     offset: number;
   }): SessionRow[] {
-    const { where, params } = filterClause({ project: filter.project, limit: 0, offset: 0 });
+    const { where, params } = filterClause({ project: filter.project, localOnly: true, limit: 0, offset: 0 });
     where.push("s.id NOT LIKE 'manual:%'");
     if (filter.dateStart || filter.dateEnd) {
       // Sessions with a turn in the range.
@@ -947,12 +973,13 @@ export class MemoryStore {
         `SELECT e.started_at, e.tool_name, e.summary, e.success FROM tool_events e
          WHERE e.session_id = ? AND ${RECALL_TOOL_LIKE} ORDER BY e.started_at, e.call_id`,
       ),
+      bookmarks: this.bookmarkedTurns(id),
     };
   }
 
   /** How many sessions (optionally of one project) got context injected or called copilot-mem's tools. */
   recallOverview(project?: string): RecallOverview {
-    const { where, params } = filterClause({ project, limit: 0, offset: 0 });
+    const { where, params } = filterClause({ project, localOnly: true, limit: 0, offset: 0 });
     where.push("s.id NOT LIKE 'manual:%'");
     const scope = `SELECT s.id FROM sessions s WHERE ${where.join(' AND ')}`;
     const counts = this.db
@@ -979,7 +1006,7 @@ export class MemoryStore {
 
   /** Turns, active sessions and observations per local day (this process's time zone) since `since`, optionally one project. */
   activity(filter: { project?: string; since: string }): ActivityDay[] {
-    const { where, params } = filterClause({ project: filter.project, limit: 0, offset: 0 });
+    const { where, params } = filterClause({ project: filter.project, localOnly: true, limit: 0, offset: 0 });
     const scope = where.length ? `AND ${where.join(' AND ')}` : '';
     const turns = this.db
       .prepare(
@@ -1251,6 +1278,88 @@ export class MemoryStore {
     return Number(this.db.prepare('UPDATE observations SET pinned_at = ? WHERE id = ?').run(pinned ? now : null, id).changes) > 0;
   }
 
+  /**
+   * Bookmarks one answer, word for word, under its own session (so it keeps the repository, path and
+   * turn). `session` fills in a session sync has not seen yet. Bookmarking the same turn or answer
+   * again returns the same ID, renaming it only when `rename` is set.
+   */
+  bookmark(
+    input: { sessionId: string; turnIndex: number; question: string; answer: string; title: string; rename?: boolean; occurredAt?: string | null },
+    now: string,
+    session?: { cwd: string | null; repository: string | null; branch: string | null },
+  ): { id: number; created: boolean; title: string } {
+    return this.transaction(() => {
+      if (session) {
+        this.db
+          .prepare(
+            `INSERT INTO sessions (id, cwd, repository, branch, created_at, updated_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO NOTHING`,
+          )
+          .run(input.sessionId, session.cwd, session.repository, session.branch, now, now, now);
+      }
+      const existing = this.db
+        .prepare(
+          `SELECT b.observation_id AS id, o.title FROM bookmarks b JOIN observations o ON o.id = b.observation_id
+           WHERE b.session_id = ? AND (b.turn_index = ? OR b.answer = ?) LIMIT 1`,
+        )
+        .get(input.sessionId, input.turnIndex, input.answer) as { id: number; title: string } | undefined;
+      if (existing) {
+        if (!input.rename) return { id: existing.id, created: false, title: existing.title };
+        this.db.prepare('UPDATE observations SET title = ? WHERE id = ?').run(input.title, existing.id);
+        return { id: existing.id, created: false, title: input.title };
+      }
+      const subtitle = input.question.replace(/\s+/g, ' ').trim().slice(0, 240);
+      const { id } = this.db
+        .prepare(
+          `INSERT INTO observations (session_id, first_turn, last_turn, type, title, subtitle, narrative, model, created_at, occurred_at, last_seen_at)
+           VALUES (?, ?, ?, 'bookmark', ?, ?, ?, 'manual', ?, ?, ?) RETURNING id`,
+        )
+        .get(input.sessionId, input.turnIndex, input.turnIndex, input.title, subtitle, input.answer, now, input.occurredAt ?? now, now) as { id: number };
+      this.db
+        .prepare('INSERT INTO bookmarks (observation_id, session_id, turn_index, question, answer, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(id, input.sessionId, input.turnIndex, input.question, input.answer, now);
+      return { id, created: true, title: input.title };
+    });
+  }
+
+  /** Turn indexes of `sessionId` that are bookmarked, with their observation IDs. */
+  bookmarkedTurns(sessionId: string): { turn_index: number; observation_id: number }[] {
+    return (this.db.prepare('SELECT turn_index, observation_id FROM bookmarks WHERE session_id = ? ORDER BY turn_index').all(sessionId) as unknown as {
+      turn_index: number;
+      observation_id: number;
+    }[]).map((r) => ({ ...r }));
+  }
+
+  /** The synced turn holding this answer (or else this question, newest first), if sync has seen it. */
+  matchTurn(sessionId: string, question: string, answer: string): number | null {
+    const row = (this.db.prepare('SELECT turn_index FROM turns WHERE session_id = ? AND assistant_response = ? ORDER BY turn_index DESC LIMIT 1').get(sessionId, answer) ??
+      this.db.prepare('SELECT turn_index FROM turns WHERE session_id = ? AND user_message = ? ORDER BY turn_index DESC LIMIT 1').get(sessionId, question)) as
+      | { turn_index: number }
+      | undefined;
+    return row ? row.turn_index : null;
+  }
+
+  /** The repository (else cwd) a session ran in. */
+  sessionProject(sessionId: string): string | undefined {
+    const row = this.db.prepare('SELECT coalesce(repository, cwd) AS p FROM sessions WHERE id = ?').get(sessionId) as { p: string | null } | undefined;
+    return row?.p ?? undefined;
+  }
+
+  /** One synced turn (question and answer) of a session; the newest one with an answer when `turnIndex` is omitted. */
+  turn(sessionId: string, turnIndex?: number): { turn_index: number; user_message: string | null; assistant_response: string | null; timestamp: string | null } | undefined {
+    const row = turnIndex === undefined
+      ? this.db
+          .prepare(
+            `SELECT turn_index, user_message, assistant_response, timestamp FROM turns
+             WHERE session_id = ? AND coalesce(assistant_response, '') <> '' ORDER BY turn_index DESC LIMIT 1`,
+          )
+          .get(sessionId)
+      : this.db
+          .prepare('SELECT turn_index, user_message, assistant_response, timestamp FROM turns WHERE session_id = ? AND turn_index = ?')
+          .get(sessionId, turnIndex);
+    return row ? ({ ...row } as { turn_index: number; user_message: string | null; assistant_response: string | null; timestamp: string | null }) : undefined;
+  }
+
   /** How many observations have a vector from `model`. */
   embeddingCount(model: string): number {
     return (this.db.prepare('SELECT count(*) AS n FROM observation_embeddings WHERE model = ?').get(model) as { n: number }).n;
@@ -1327,7 +1436,7 @@ export class MemoryStore {
              SELECT o.session_id, max(o.id) AS last_obs,
                     (SELECT max(t.timestamp) FROM turns t WHERE t.session_id = o.session_id) AS last_turn
              FROM observations o
-             WHERE o.session_id NOT LIKE '${MANUAL_SESSION_PREFIX}%'
+             WHERE o.session_id NOT LIKE '${MANUAL_SESSION_PREFIX}%' AND o.type <> 'bookmark'
                AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.session_id = o.session_id
                                AND t.compressed_at IS NULL AND t.compress_attempts < ?)
              GROUP BY o.session_id
@@ -1350,7 +1459,7 @@ export class MemoryStore {
       .get(sessionId) as { repository: string | null; cwd: string | null; branch: string | null; first_request: string | null };
     const observations = (
       this.db
-        .prepare('SELECT id, type, title, subtitle, narrative FROM observations WHERE session_id = ? ORDER BY first_turn, id')
+        .prepare("SELECT id, type, title, subtitle, narrative FROM observations WHERE session_id = ? AND type <> 'bookmark' ORDER BY first_turn, id")
         .all(sessionId) as unknown as SummaryInput['observations']
     ).map((o) => ({ ...o }));
     return { session_id: sessionId, ...session, observations };
@@ -1430,7 +1539,7 @@ export class MemoryStore {
 
   /** Stored (non-skipped) summaries, newest first. `project` matches like search filters. */
   summaries(filter: { project?: string | string[]; sessionId?: string; dateStart?: string; dateEnd?: string; limit: number }): SessionSummary[] {
-    const { where, params } = filterClause({ project: filter.project, limit: 0, offset: 0 });
+    const { where, params } = filterClause({ project: filter.project, localOnly: true, limit: 0, offset: 0 });
     where.push("ss.request <> ''");
     if (filter.dateStart) {
       where.push('ss.occurred_at >= ?');
@@ -1576,8 +1685,8 @@ export class MemoryStore {
     const rows = this.db
       .prepare(
         `SELECT ${SUMMARY_COLUMNS}, o.subtitle, o.narrative, o.facts, o.concepts, o.files, o.files_read,
-                o.first_turn, o.last_turn, s.branch, o.occurrences, o.last_seen_at, o.edited_at
-         FROM observations o LEFT JOIN sessions s ON s.id = o.session_id
+                o.first_turn, o.last_turn, s.branch, o.occurrences, o.last_seen_at, o.edited_at, b.question
+         FROM observations o LEFT JOIN sessions s ON s.id = o.session_id LEFT JOIN bookmarks b ON b.observation_id = o.id
          WHERE o.id IN (${ids.map(() => '?').join(', ')})
          ORDER BY o.occurred_at, o.id`,
       )
@@ -1595,8 +1704,9 @@ export class MemoryStore {
        WHERE d.observation_id = ?1 OR d.duplicate_of = ?1
        ORDER BY d.score DESC, o.id LIMIT 10`,
     );
-    return rows.map((row) => ({
+    return rows.map(({ question, ...row }) => ({
       ...row,
+      ...(question == null ? {} : { question }),
       facts: JSON.parse(row.facts),
       concepts: JSON.parse(row.concepts),
       files: JSON.parse(row.files),

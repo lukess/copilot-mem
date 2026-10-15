@@ -347,6 +347,27 @@ describe('viewer', () => {
     assert.equal((await post('/api/notes', { project: 'acme/api', title: 't', text: '' })).status, 400);
   });
 
+  test('bookmarks a turn word for word; the session marks it; only the title is editable', async () => {
+    const created = await post('/api/bookmarks', { session_id: 's2', turn_index: 2, title: 'Scratch answer' });
+    assert.equal(created.status, 201);
+    const id = created.body.id;
+    assert.deepEqual((await post('/api/bookmarks', { session_id: 's2', turn_index: 2 })).body.id, id, 'bookmarking again keeps one bookmark');
+    assert.deepEqual((await get('/api/sessions/s2')).body.bookmarks, [{ turn_index: 2, observation_id: id }]);
+    const o = (await get(`/api/observations/${id}`)).body.observation;
+    assert.deepEqual([o.type, o.title, o.question, o.narrative], ['bookmark', 'Scratch answer', 'u', 'a']);
+
+    assert.equal((await post(`/api/observations/${id}`, { type: 'bookmark', title: 'Renamed', narrative: 'changed' })).status, 200);
+    const edited = (await get(`/api/observations/${id}`)).body.observation;
+    assert.deepEqual([edited.title, edited.narrative], ['Renamed', 'a']);
+    assert.equal((await post(`/api/observations/${id}`, { type: 'note', title: 'x', narrative: 'y' })).status, 400);
+    const other = (await get('/api/observations?q=Scratch+note')).body[0].id;
+    assert.equal((await post(`/api/observations/${other}`, { type: 'bookmark', title: 'x', narrative: 'y' })).status, 400);
+
+    assert.equal((await post('/api/bookmarks', { session_id: 's2', turn_index: 9 })).status, 400);
+    assert.equal((await post('/api/bookmarks', { session_id: 's2', turn_index: -1 })).status, 400);
+    assert.equal((await post('/api/bookmarks', { session_id: 's2', turn_index: 2 }, {})).status, 403);
+  });
+
   test('changes need the action header and a same-origin request', async () => {
     const edit = { type: 'note', title: 't', narrative: 'n' };
     assert.equal((await post('/api/observations/1', edit, {})).status, 403);

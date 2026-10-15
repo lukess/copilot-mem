@@ -13,6 +13,7 @@ import { runHook } from './hooks/hook.ts';
 import { install, uninstall, type InstallContext } from './integration/install.ts';
 import { createRecallServer } from './mcp/recall-server.ts';
 import { createQueryEmbedder, embedderFromSettings, embedderOrWarn, embedPending, localRuntimeInstalled, setupLocalRuntime } from './search/embeddings.ts';
+import { bookmarkAnswer, latestSession } from './bookmark.ts';
 import { linkProjects, listLinks, unlinkProjects } from './links.ts';
 import { rememberNote } from './remember.ts';
 import { collectStatus, settingsReport } from './status.ts';
@@ -49,6 +50,11 @@ Memory:
   remember <title> <text> [--fact F]... [--file F]... [--project P]
                          Save a note to memory (type "note"; never changed by compression). Project
                          defaults to the current repository or directory
+  bookmark [--title T] [--back N] [--session ID] [--turn N]
+                         Save a Copilot answer word for word, with its question, repository and path.
+                         Default: the newest answer of the most recent session (--back 2 = the one
+                         before). Bookmarks are found by search from any project
+  bookmarks [query]      List bookmarked answers (newest first, or best matches for the query)
   link <project> <project>...
                          Mark projects you work on together (e.g. owner/app owner/api), both ways:
                          session-start context includes a few of their observations, and search
@@ -60,7 +66,8 @@ Memory:
                          Live web dashboard on http://127.0.0.1:${DEFAULT_VIEWER_PORT}
 
 Used by Copilot (installed for you):
-  mcp                    Run the recall MCP server (search / timeline / get_observations) on stdio
+  mcp                    Run the recall MCP server (search / timeline / get_observations / remember /
+                         bookmark) on stdio
   hook <event>           Handle a Copilot hook (session-start | stop)
   worker                 Background sync + capped compression (started by hooks)
 
@@ -310,6 +317,41 @@ async function main(argv: string[]): Promise<number> {
       }
       return 0;
     }
+    case 'bookmark': {
+      const turn = parseIntFlag(args, '--turn', 0);
+      const back = parseIntFlag(args, '--back', 1);
+      // Run from inside a Copilot session, the newest exchange is the request to bookmark, so skip it.
+      const inSession = process.env.COPILOT_AGENT_SESSION_ID;
+      const sessionId = stringFlag(args, '--session') ?? inSession ?? latestSession(sessionStateDir());
+      if (!sessionId) throw new Error('no Copilot session found; pass --session ID');
+      const store = new MemoryStore(memoryDbPath());
+      try {
+        const saved = bookmarkAnswer(store, {
+          sessionId,
+          turnIndex: turn,
+          back,
+          title: stringFlag(args, '--title'),
+          skipCurrent: sessionId === inSession,
+          sessionStateDir: sessionStateDir(),
+        });
+        console.log(`${saved.created ? 'Bookmarked' : saved.title === stringFlag(args, '--title') ? 'Already bookmarked; renamed' : 'Already bookmarked'}: #${saved.id} "${saved.title}" (${saved.project}, session ${sessionId}, turn ${saved.turnIndex}).`);
+      } finally {
+        store.close();
+      }
+      return 0;
+    }
+    case 'bookmarks': {
+      const query = args.filter((a) => !a.startsWith('--')).join(' ').trim() || undefined;
+      const store = new MemoryStore(memoryDbPath());
+      try {
+        const found = store.searchObservations({ query, type: 'bookmark', limit: 100, offset: 0 });
+        if (!found.length) console.log(query ? `No bookmarks match "${query}".` : 'No bookmarks yet.');
+        for (const o of found) console.log(`#${o.id}  ${o.occurred_at.slice(0, 10)}  ${o.title}  [${o.repository ?? o.cwd ?? 'unknown project'}]`);
+      } finally {
+        store.close();
+      }
+      return 0;
+    }
     case 'link':
     case 'unlink':
     case 'links': {
@@ -351,7 +393,10 @@ async function main(argv: string[]): Promise<number> {
     case 'mcp': {
       // stdout carries the MCP protocol; never print to it here.
       const store = new MemoryStore(memoryDbPath());
-      const server = createRecallServer(store, pkg.version, createQueryEmbedder(embedderOrWarn((m) => console.error(m))));
+      const server = createRecallServer(store, pkg.version, createQueryEmbedder(embedderOrWarn((m) => console.error(m))), {
+        id: process.env.COPILOT_AGENT_SESSION_ID,
+        stateDir: sessionStateDir(),
+      });
       server.onclose = () => store.close();
       await server.connect(new StdioServerTransport());
       return 0;

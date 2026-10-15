@@ -9,7 +9,7 @@ export const CONTEXT_ITEMS = 15;
 const TOOLS_NOTE =
   'copilot-mem memory tools are available: search (compact index) -> timeline (context around an ID) -> ' +
   'get_observations (full details for chosen IDs). Use them when the user refers to earlier work or past context would help. ' +
-  'remember saves a note the user explicitly asks to keep.';
+  'remember saves a note the user explicitly asks to keep; bookmark saves your previous answer word for word when the user asks to bookmark it.';
 
 function gitRoot(dir: string): string | undefined {
   for (let d = dir; ; d = dirname(d)) {
@@ -76,8 +76,8 @@ function pick(store: MemoryStore, project: string[], count: number, today: Date)
   const pool = withoutDuplicates(
     store,
     store
-      .searchObservations({ project, limit: CONTEXT_POOL + MAX_NOTES + MAX_PINNED, offset: 0 })
-      .filter((o) => o.type !== 'note' && !o.pinned_at)
+      .searchObservations({ project, localOnly: true, limit: CONTEXT_POOL + MAX_NOTES + MAX_PINNED, offset: 0 })
+      .filter((o) => o.type !== 'note' && o.type !== 'bookmark' && !o.pinned_at)
       .slice(0, CONTEXT_POOL),
   );
   const info = store.reinforcementInfo(pool.map((o) => o.id));
@@ -94,7 +94,7 @@ export function buildSessionContext(store: MemoryStore, cwd: string, budget = CO
   // A directory spanning several repos already covers them; links apply to a single repo.
   const linked = git ? store.linkedProjects(project) : [];
   const [summary] = store.summaries({ project, limit: 1 });
-  const pinned = store.searchObservations({ project, pinned: true, limit: MAX_PINNED, offset: 0 });
+  const pinned = store.searchObservations({ project, localOnly: true, pinned: true, limit: MAX_PINNED, offset: 0 });
   const notes = store.searchObservations({ project, type: 'note', limit: MAX_NOTES + MAX_PINNED, offset: 0 }).filter((o) => !o.pinned_at).slice(0, MAX_NOTES);
   const linkedPicked = linked.length ? pick(store, linked, LINKED_ITEMS, today) : [];
   const picked = pick(store, project, CONTEXT_ITEMS - linkedPicked.length, today);

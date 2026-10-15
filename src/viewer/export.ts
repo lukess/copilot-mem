@@ -3,7 +3,7 @@ import type { MemoryStore, ObservationDetail, ObservationType, SessionSummary } 
 /** Most observations one export includes (newest, or best matches for a query). */
 export const MAX_EXPORT_OBSERVATIONS = 2_000;
 const MAX_EXPORT_SUMMARIES = 500;
-const TYPE_ORDER: ObservationType[] = ['feature', 'bugfix', 'decision', 'refactor', 'change', 'discovery', 'note'];
+const TYPE_ORDER: ObservationType[] = ['feature', 'bugfix', 'decision', 'refactor', 'change', 'discovery', 'note', 'bookmark'];
 const TYPE_HEADINGS: Record<ObservationType, string> = {
   feature: 'Features',
   bugfix: 'Bug fixes',
@@ -12,6 +12,7 @@ const TYPE_HEADINGS: Record<ObservationType, string> = {
   change: 'Changes',
   discovery: 'Discoveries',
   note: 'Notes',
+  bookmark: 'Bookmarked answers',
 };
 
 export interface ExportFilter {
@@ -80,7 +81,15 @@ export function exportMarkdown(store: MemoryStore, filter: ExportFilter, now = n
       const items = g.observations.filter((o) => o.type === type).sort((a, b) => day(a.occurred_at).localeCompare(day(b.occurred_at)) || a.id - b.id);
       if (!items.length) continue;
       out.push('', `### ${TYPE_HEADINGS[type]}`, '');
-      for (const o of items) out.push(`- ${day(o.occurred_at)} **${oneLine(o.title)}**${o.subtitle ? ` - ${oneLine(o.subtitle)}` : ''} (#${o.id})`);
+      for (const o of items) {
+        if (o.type !== 'bookmark') {
+          out.push(`- ${day(o.occurred_at)} **${oneLine(o.title)}**${o.subtitle ? ` - ${oneLine(o.subtitle)}` : ''} (#${o.id})`);
+          continue;
+        }
+        // Bookmarks are kept for their exact text, so the export carries the full question and answer.
+        const indent = (text: string) => text.split('\n').map((l) => (l ? `  ${l}` : '')).join('\n');
+        out.push(`- ${day(o.occurred_at)} **${oneLine(o.title)}** (#${o.id})`, '', indent(`> ${oneLine(o.question ?? o.subtitle)}`), '', indent(o.narrative), '');
+      }
     }
   }
   return `${out.join('\n')}\n`;

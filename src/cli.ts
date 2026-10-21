@@ -74,7 +74,7 @@ Used by Copilot (installed for you):
 Settings: $COPILOT_MEM_DATA_DIR/settings.json (created by install; an environment variable of the
 same name overrides it; "" = default). Changes apply to new Copilot sessions without reinstalling.
   COPILOT_MEM_SOURCE_DB       Copilot session store (default $COPILOT_HOME/session-store.db)
-  COPILOT_MEM_MODEL           Model used to compress turns (default gpt-5-mini)
+  COPILOT_MEM_MODEL           Model used to compress turns (default claude-haiku-5.5)
   COPILOT_MEM_AUTO_COMPRESS   Copilot calls per background run, compression then session summaries (default 5; 0 = sync only)
   COPILOT_MEM_COPILOT_BIN     Copilot CLI binary (default: copilot on PATH; install records it)
   COPILOT_MEM_EMBED_PROVIDER  Semantic search embeddings: local (default; in-process, needs embed --setup) | ollama |

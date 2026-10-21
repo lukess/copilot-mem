@@ -9,8 +9,8 @@ import { dirname, join } from 'node:path';
 export const SETTING_DEFAULTS = {
   /** Copilot session store; '' = $COPILOT_HOME/session-store.db. */
   COPILOT_MEM_SOURCE_DB: '',
-  // gpt-5-mini costs 0 premium requests on Copilot plans (verified with --usage-output-file).
-  COPILOT_MEM_MODEL: 'gpt-5-mini',
+  // Measured: ~0.16 AI credits per batch (no reasoning tokens), ~3x cheaper than gpt-5-mini, which Copilot CLI no longer offers.
+  COPILOT_MEM_MODEL: 'claude-haiku-5.5',
   COPILOT_MEM_AUTO_COMPRESS: '5',
   /** '' = copilot on PATH; install records the one it found. */
   COPILOT_MEM_COPILOT_BIN: '',

@@ -63,7 +63,7 @@ New Copilot session ◄── context at start + search tools ◄── memory.d
 1. **Capture.** Copilot CLI already saves every conversation. copilot-mem
    reads that store (read-only) after each session. It never slows Copilot
    down: hooks only start a small background worker and exit.
-2. **Compress.** The worker asks Copilot (`gpt-5-mini`) to turn the raw
+2. **Compress.** The worker asks Copilot (`claude-haiku-5.5`) to turn the raw
    conversation into short **observations**, e.g. *"bugfix: retry OTLP export
    with backoff"*, with facts and files. Finished sessions also get a
    one-paragraph summary.
@@ -157,7 +157,7 @@ same name overrides the file. `copilot-mem settings` shows what's in effect.
 | Setting | Default | What it does |
 |---|---|---|
 | `COPILOT_MEM_AUTO_COMPRESS` | `5` | Copilot calls the background worker may make each run; `0` turns automatic summarizing off |
-| `COPILOT_MEM_MODEL` | `gpt-5-mini` | Model used to summarize |
+| `COPILOT_MEM_MODEL` | `claude-haiku-5.5` | Model used to summarize |
 | `COPILOT_MEM_EMBED_PROVIDER` | `local` | Meaning-based search: `local`, `ollama`, `openai`, `voyage`, `cohere`, `jina` or `off` |
 | `COPILOT_MEM_EMBED_MODEL` | provider default | `local`: `Xenova/bge-small-en-v1.5` (English), `Xenova/all-MiniLM-L6-v2` (smaller) `Xenova/multilingual-e5-small` or `Xenova/bge-m3` (~100 languages); ollama: `bge-m3` |
 | `COPILOT_MEM_EMBED_URL` | provider default | Endpoint, e.g. a local OpenAI-compatible server; for `local`, a Hugging Face mirror |
@@ -173,8 +173,9 @@ same name overrides the file. `copilot-mem settings` shows what's in effect.
 
 ### Cost
 
-Summarizing uses `gpt-5-mini`, which uses **no premium requests**. Each call
-costs about 0.5 AI credits and covers several turns. The background worker
+Summarizing uses `claude-haiku-5.5`. Each call costs about 0.16 AI credits
+and covers several turns (on legacy premium-request billing, one premium
+request). The background worker
 makes at most 5 calls per run. `copilot-mem stats` and the dashboard show the
 real usage. Search, the dashboard and local or ollama embeddings cost nothing.
 

@@ -196,9 +196,10 @@ conversation text.
   nonexistent tool), and with `COPILOT_ALLOW_ALL` removed. The summarizer's
   own sessions never land in your `~/.copilot/session-store.db`, and the
   scratch dir is deleted afterwards.
-- Cost: `gpt-5-mini` uses 0 premium requests. A real batch averages about
-  0.5 AI credits per call (about 0.08 per turn); a trivial prompt is about
-  0.06. Billing is per request, so larger batches are cheaper. Every call's
+- Cost: `claude-haiku-5.5` averages about 0.16 AI credits per batch (about
+  0.03 per turn; one premium request on legacy billing). The former default,
+  `gpt-5-mini`, averaged about 0.55 because of reasoning tokens, and newer
+  Copilot CLI releases reject it. Billing is per request, so larger batches are cheaper. Every call's
   wall time, API time, tokens, AI credits and premium requests
   are read from Copilot's `--usage-output-file` and stored in `compress_calls`;
   see `copilot-mem stats` or the dashboard. Calls made before this was added

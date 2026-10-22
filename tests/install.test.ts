@@ -44,7 +44,7 @@ beforeEach(() => {
     copilotBinName: bin,
     runtime: '/usr/local/bin/node',
     entry: join(dir, 'bundle.js'),
-    env: { COPILOT_MEM_MODEL: 'gpt-5-mini', COPILOT_MEM_AUTO_COMPRESS: '2', UNRELATED: 'x' },
+    env: { COPILOT_MEM_MODEL: 'claude-haiku-5.5', COPILOT_MEM_AUTO_COMPRESS: '2', UNRELATED: 'x' },
     log: (m) => logs.push(m),
     home: join(dir, 'user'),
   };
@@ -99,7 +99,7 @@ describe('install', () => {
     // Settings live in settings.json (so later edits apply), not baked into the hooks or MCP config.
     assert.deepEqual(hooks.hooks.agentStop[0].env, {});
     const settings = JSON.parse(readFileSync(join(ctx.dataDir, 'settings.json'), 'utf8'));
-    assert.equal(settings.COPILOT_MEM_MODEL, 'gpt-5-mini');
+    assert.equal(settings.COPILOT_MEM_MODEL, 'claude-haiku-5.5');
     assert.equal(settings.COPILOT_MEM_AUTO_COMPRESS, '2');
     assert.equal(settings.COPILOT_MEM_COPILOT_BIN, join(dir, 'copilot'));
     assert.equal(settings.UNRELATED, undefined);

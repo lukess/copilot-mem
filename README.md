@@ -19,7 +19,7 @@ you start a new session, so you don't have to explain your project again.
 
 ## Quick start
 
-You need [Bun](https://bun.sh) 1.4+ (or Node.js 26+) and Copilot CLI, signed in.
+You need [Bun](https://bun.sh) 1.4.4+ (or Node.js 26.12.1+) and Copilot CLI, signed in.
 From the copilot-mem folder:
 
 ```bash

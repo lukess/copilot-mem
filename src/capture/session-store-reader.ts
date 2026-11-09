@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import type { UsageData, UsageRow, UsageSession } from '../usage.ts';
 
 export interface SourceSession {
   id: string;
@@ -96,6 +97,31 @@ export class SessionStoreReader {
     return this.db
       .prepare('SELECT session_id, ref_type, ref_value, turn_index, created_at FROM session_refs')
       .all() as unknown as SourceRef[];
+  }
+
+  /**
+   * Model calls since `since` (ISO timestamp), grouped by local day, session, model and initiator, plus
+   * the sessions they belong to; null if this Copilot version records no usage.
+   */
+  readUsage(since: string): UsageData | null {
+    const columns = ['session_id', 'model', 'initiator', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'total_nano_aiu', 'created_at'];
+    if (!this.hasColumns('assistant_usage_events', columns)) return null;
+    // created_at is UTC, written either as ISO (2026-11-02T07:20:20.139Z) or as SQLite's datetime('now'); julianday() reads both.
+    const window = 'julianday(created_at) >= julianday(?)';
+    const rows = this.db
+      .prepare(
+        `SELECT date(created_at, 'localtime') AS day, session_id, model, initiator, count(*) AS calls,
+                sum(total_nano_aiu IS NULL) AS unpriced, coalesce(sum(input_tokens), 0) AS input_tokens,
+                coalesce(sum(output_tokens), 0) AS output_tokens, coalesce(sum(cache_read_tokens), 0) AS cache_read_tokens,
+                coalesce(sum(total_nano_aiu), 0) / 1e9 AS credits
+         FROM assistant_usage_events WHERE ${window}
+         GROUP BY day, session_id, model, initiator`,
+      )
+      .all(since) as unknown as UsageRow[];
+    const sessions = this.db
+      .prepare(`SELECT id, repository, cwd, summary FROM sessions WHERE id IN (SELECT session_id FROM assistant_usage_events WHERE ${window})`)
+      .all(since) as unknown as UsageSession[];
+    return { rows: rows.map((r) => ({ ...r })), sessions: sessions.map((s) => ({ ...s })) };
   }
 
   private hasColumns(table: string, columns: string[]): boolean {

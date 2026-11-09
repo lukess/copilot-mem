@@ -103,6 +103,18 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   form.edit .actions { grid-column:2; display:flex; gap:6px; }
   .err { color:var(--bad); }
   .st-ok { color:var(--ok); } .st-bad_output { color:var(--warn); } .st-error { color:var(--bad); }
+  .chart { position:relative; display:flex; align-items:stretch; gap:2px; height:140px; margin:8px 0 2px; border-bottom:1px solid var(--line); }
+  .chart .col { flex:1; min-width:3px; display:flex; flex-direction:column-reverse; }
+  .chart .col:hover { background:#1c2129; }
+  .chart .col i { display:block; width:100%; }
+  .chart .pace { position:absolute; left:0; right:0; border-top:1px dashed var(--warn); pointer-events:none; }
+  .axis { display:flex; justify-content:space-between; color:var(--dim); font-size:11px; }
+  .swatch { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+  .keys { display:flex; flex-wrap:wrap; gap:2px 12px; margin:6px 0 12px; color:var(--dim); font-size:11px; white-space:nowrap; }
+  .meter { height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin:4px 0 8px; max-width:420px; }
+  .meter div { height:100%; background:var(--ok); }
+  .meter div.warn { background:var(--warn); } .meter div.over { background:var(--bad); }
+  b.warn { color:var(--warn); } b.over { color:var(--bad); }
 </style>
 </head>
 <body>
@@ -118,6 +130,7 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   </span>
   <div class="stat link" id="recall" title="Sessions that got copilot-mem context injected or called its tools"><b id="c-recall">&#x2013;</b><span>sessions used memory &#x203a;</span></div>
   <div class="stat link" id="usage" title="Compression time, tokens and AI credits"><b id="c-credits">&#x2013;</b><span>AI credits used &#x203a;</span></div>
+  <div class="stat link" id="cost" title="AI credits all your Copilot CLI sessions used: by day, model, project and session, with the monthly budget"><b id="c-cost">&#x2013;</b><span>Copilot credits, 30d &#x203a;</span></div>
   <span id="worker" class="badge">worker: &#x2013;</span>
   <span class="spacer"></span>
   <span id="integration" class="dim"></span>
@@ -505,6 +518,78 @@ function renderStats() {
 }
 
 function pre(text, cls) { return h("pre", { class: "text" + (cls ? " " + cls : "") }, text || ""); }
+
+var MODEL_COLORS = ["#58a6ff", "#3fb950", "#d29922", "#bc8cff", "#f778ba", "#39c5cf", "#ff7b72", "#8b949e"];
+function bigTok(n) { return n >= 1e9 ? (n / 1e9).toFixed(2) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : tok(n); }
+function loadCost() {
+  return api("/api/usage?days=30").then(function (u) {
+    state.cost = u;
+    var el = $("c-cost");
+    el.textContent = u.available ? credits(u.totals.credits) : "\u2013";
+    el.className = u.available && u.month.status !== "ok" ? u.month.status || "" : "";
+    if (state.view === "cost") renderCost();
+  }).catch(function (e) {
+    state.cost = { available: false, reason: e.message };
+    if (state.view === "cost") renderCost();
+  });
+}
+function costGroups(label, rows, total) {
+  return grid([label, "AI credits", "share", "calls"], rows.map(function (g) {
+    return h("tr", null, h("td", { class: "name", title: g.name }, h("bdi", null, g.name)),
+      h("td", null, credits(g.credits)), h("td", null, pct(g.credits, total)), h("td", null, fmt(g.calls)));
+  }));
+}
+function costChart(u, colors) {
+  var m = u.month, pace = m.budget ? m.budget / m.daysInMonth : 0;
+  var max = u.daily.reduce(function (x, d) { return Math.max(x, d.credits); }, pace) || 1;
+  var cols = u.daily.map(function (d) {
+    var parts = u.models.filter(function (g) { return d.models[g.name]; });
+    return h("div", { class: "col", title: d.day + ": " + credits(d.credits) + " AI credits" +
+      parts.map(function (g) { return "\n  " + g.name + ": " + credits(d.models[g.name]); }).join("") },
+      parts.map(function (g) { return h("i", { style: "height:" + (100 * d.models[g.name] / max).toFixed(2) + "%;background:" + colors[g.name] }); }));
+  });
+  return [
+    h("div", { class: "chart" }, cols, pace ? h("div", { class: "pace", style: "bottom:" + (100 * pace / max).toFixed(2) + "%",
+      title: "Daily pace for the monthly budget: " + credits(pace) + " AI credits" }) : null),
+    h("div", { class: "axis" }, h("span", null, u.from), h("span", null, "max " + credits(max) + "/day" + (pace ? " \u00b7 dashed: budget pace " + credits(pace) + "/day" : "")), h("span", null, u.to)),
+    h("p", { class: "keys" }, u.models.map(function (g) { return h("span", null, h("i", { class: "swatch", style: "background:" + colors[g.name] }), g.name); }))];
+}
+function renderCost() {
+  var u = state.cost, box = $("detail");
+  state.view = "cost";
+  if (!u) { fill(box, h("div", { class: "empty" }, "Loading\u2026")); return; }
+  if (!u.available) { fill(box, h("div", null, h("h3", null, "Copilot usage"), h("p", { class: "dim" }, u.reason))); return; }
+  var t = u.totals, m = u.month, colors = {};
+  u.models.forEach(function (g, i) { colors[g.name] = MODEL_COLORS[Math.min(i, MODEL_COLORS.length - 1)]; });
+  fill(box, h("div", null,
+    h("h3", null, "Copilot usage \u00b7 last " + u.days + " days"),
+    h("p", { class: "dim" }, "AI credits every Copilot CLI model call used (" + u.from + " to " + u.to + ", local days), from Copilot's session store. " +
+      "copilot-mem's own compression calls are under \u201cAI credits used\u201d."),
+    grid(["AI credits", "calls", "tokens in / out", "cache hit"], [h("tr", null,
+      h("td", null, credits(t.credits)), h("td", null, fmt(t.calls)),
+      h("td", null, bigTok(t.inputTokens) + " / " + bigTok(t.outputTokens)), h("td", null, pct(t.cacheReadTokens, t.inputTokens)))]),
+    t.unpricedCalls ? h("p", { class: "dim" }, fmt(t.unpricedCalls) + " call(s) had no recorded price; credits exclude them.") : null,
+    h("h4", null, "This month (" + m.month + ")"),
+    h("p", null, credits(m.credits) + " AI credits so far" + (m.budget ? " of a " + credits(m.budget) + " budget (" + pct(m.credits, m.budget) + ")" : "") +
+      "; at this rate " + credits(m.projected) + " by month end (day " + m.daysElapsed + " of " + m.daysInMonth + ")."),
+    m.budget ? h("div", { class: "meter", title: m.status === "over" ? "over budget" : m.status === "warn" ? "projected to reach 80% of the budget" : "on track" },
+      h("div", { class: m.status, style: "width:" + Math.min(100, 100 * m.credits / m.budget).toFixed(1) + "%" })) : null,
+    u.budgetError ? h("p", { class: "err" }, u.budgetError) : m.budget ? null :
+      h("p", { class: "dim" }, "Set COPILOT_MEM_MONTHLY_BUDGET (AI credits) in settings.json to track a monthly budget."),
+    h("h4", null, "By day"),
+    costChart(u, colors),
+    u.topSessions.length ? [h("h4", null, "Top sessions"), grid(["session", "project", "last day", "calls", "AI credits", "share"],
+      u.topSessions.map(function (s) {
+        return h("tr", { class: "pick", title: "Open " + s.id + "\nmodels: " + s.models.join(", "), onclick: function () { openSession(s.id); } },
+          h("td", { class: "name", title: s.name }, s.name), h("td", { class: "name", title: s.repository || s.cwd || "" }, h("bdi", null, s.repository || s.cwd || "\u2013")),
+          h("td", null, s.lastDay), h("td", null, fmt(s.calls)), h("td", null, credits(s.credits)), h("td", null, pct(s.credits, t.credits)));
+      }))] : h("p", { class: "dim" }, "No Copilot calls in this period."),
+    u.models.length ? [h("h4", null, "By model"), costGroups("model", u.models, t.credits)] : null,
+    u.repositories.length ? [h("h4", null, "By project"), costGroups("project", u.repositories, t.credits)] : null,
+    u.initiators.length ? [h("h4", null, "By initiator"), h("p", { class: "dim" }, "user = your prompts; agent = tool-call follow-ups; sub-agent = task agents; compaction = context summaries."),
+      costGroups("initiator", u.initiators, t.credits)] : null));
+  box.scrollTop = 0;
+}
 function openSession(id, from, to) {
   state.selected = id;
   state.view = "session";
@@ -846,6 +931,7 @@ $("q").addEventListener("input", function (e) {
   timer = setTimeout(function () { state.q = e.target.value.trim(); reload(); }, 250);
 });
 $("usage").addEventListener("click", function () { state.selected = null; renderList(); renderStats(); loadStats(); });
+$("cost").addEventListener("click", function () { state.selected = null; renderList(); renderCost(); loadCost(); });
 $("recall").addEventListener("click", function () {
   state.selected = null; renderList();
   var all = !state.project;
@@ -868,6 +954,7 @@ $("type").addEventListener("change", function (e) { state.type = e.target.value;
 loadStatus();
 loadProjects();
 loadRecall();
+loadCost();
 reload();
 connect();
 </script>

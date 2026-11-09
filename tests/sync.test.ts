@@ -204,4 +204,35 @@ describe('SessionStoreReader', () => {
       reader.close();
     }
   });
+
+  test('reads usage since a time, grouped by local day, session, model and initiator', () => {
+    const old = new SessionStoreReader(sourcePath);
+    assert.equal(old.readUsage(T0), null, 'a Copilot version without per-call usage');
+    old.close();
+    source.exec(`CREATE TABLE assistant_usage_events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, model TEXT NOT NULL,
+      input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, total_nano_aiu INTEGER, initiator TEXT,
+      created_at TEXT DEFAULT (datetime('now')))`);
+    const add = source.prepare(
+      'INSERT INTO assistant_usage_events (session_id, model, input_tokens, output_tokens, cache_read_tokens, total_nano_aiu, initiator, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    );
+    add.run('s1', 'm1', 100, 10, 50, 2_000_000_000, 'user', T0);
+    add.run('s1', 'm1', 200, 20, 0, null, 'user', '2026-01-01 12:30:00'); // SQLite datetime('now') format, unpriced
+    add.run('s1', 'm1', 1, 1, 0, 9_000_000_000, 'user', '2026-01-01 11:59:59'); // before `since`
+    add.run('s2', 'm2', 10, 1, 0, 500_000_000, 'agent', at(86_400_000));
+    const localDay = (iso: string) => {
+      const d = new Date(iso);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const reader = new SessionStoreReader(sourcePath);
+    try {
+      const usage = reader.readUsage(T0)!;
+      assert.deepEqual(usage.rows.sort((a, b) => a.session_id.localeCompare(b.session_id)), [
+        { day: localDay(T0), session_id: 's1', model: 'm1', initiator: 'user', calls: 2, unpriced: 1, input_tokens: 300, output_tokens: 30, cache_read_tokens: 50, credits: 2 },
+        { day: localDay(at(86_400_000)), session_id: 's2', model: 'm2', initiator: 'agent', calls: 1, unpriced: 0, input_tokens: 10, output_tokens: 1, cache_read_tokens: 0, credits: 0.5 },
+      ]);
+      assert.deepEqual(usage.sessions.map((s) => [s.id, s.repository]).sort(), [['s1', 'owner/repo'], ['s2', 'owner/repo']]);
+    } finally {
+      reader.close();
+    }
+  });
 });

@@ -143,6 +143,9 @@ A local web page to browse and manage your memory:
 - **Sessions used memory** shows whether Copilot actually got and used memory.
 - **AI credits used** shows what compression has cost and what the pending
   backlog would cost.
+- **Copilot credits, 30d** shows what all your Copilot CLI sessions cost over
+  the last 30 days: per day by model, top sessions, and by model, project and
+  initiator, plus this month's spend against `COPILOT_MEM_MONTHLY_BUDGET`.
 - **Compress** summarizes pending conversations now, for one project or all.
 - **Settings** shows your settings, health checks and linked projects.
 
@@ -164,6 +167,7 @@ same name overrides the file. `copilot-mem settings` shows what's in effect.
 | `COPILOT_MEM_EMBED_API_KEY` | none | Needed for voyage, cohere and jina |
 | `COPILOT_MEM_COPILOT_BIN` | `copilot` on PATH | Copilot CLI binary |
 | `COPILOT_MEM_SOURCE_DB` | `~/.copilot/session-store.db` | Copilot's session store |
+| `COPILOT_MEM_MONTHLY_BUDGET` | none | Monthly AI-credit budget shown in the dashboard's Copilot usage view |
 
 `COPILOT_HOME` (default `~/.copilot`) and `COPILOT_MEM_DATA_DIR` (default
 `~/.copilot-mem`) can only be set as environment variables.

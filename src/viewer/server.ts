@@ -8,6 +8,7 @@ import { tailLines, workerState, type SettingsReport } from '../status.ts';
 import { OBSERVATION_TYPES, type MemoryStore, type ObservationType } from '../storage/memory-store.ts';
 import type { WorkerFiles } from '../worker/worker.ts';
 import { MAX_FACTS, MAX_TEXT, MAX_TITLE, rememberNote } from '../remember.ts';
+import { summarizeUsage, usageSince, type UsageData } from '../usage.ts';
 import { exportMarkdown } from './export.ts';
 import { VIEWER_HTML } from './page.ts';
 
@@ -31,6 +32,10 @@ export interface ViewerOptions {
   embedQuery?: QueryEmbedder;
   /** Effective settings and embedding model for the Settings view; omitted = not shown. */
   settings?: () => SettingsReport;
+  /** Copilot CLI usage since an ISO timestamp (null = this Copilot records none); omitted = not available. */
+  usage?: (since: string) => UsageData | null;
+  /** Monthly AI-credit budget (null = none); may throw on a bad setting. */
+  budget?: () => number | null;
 }
 
 export interface Viewer {
@@ -283,6 +288,21 @@ export async function startViewer(options: ViewerOptions): Promise<Viewer> {
         },
         links: store.projectLinks(),
       });
+    }
+    if (url.pathname === '/api/usage') {
+      const days = intParam(params, 'days', 30, 1, 90);
+      if (!options.usage) return sendJson(res, 200, { available: false, reason: 'Copilot usage is not available in this viewer.' });
+      const now = new Date();
+      const data = options.usage(usageSince(days, now));
+      if (!data) return sendJson(res, 200, { available: false, reason: 'This Copilot CLI version does not record per-call usage.' });
+      let budget: number | null = null;
+      let budgetError: string | null = null;
+      try {
+        budget = options.budget?.() ?? null;
+      } catch (error) {
+        budgetError = (error as Error).message;
+      }
+      return sendJson(res, 200, { ...summarizeUsage(data, { days, budget, now }), budgetError });
     }
     if (url.pathname === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });

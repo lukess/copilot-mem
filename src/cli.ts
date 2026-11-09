@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import pkg from '../package.json' with { type: 'json' };
-import { compressorModel, copilotBin, copilotHome, dataDir, describeSettings, memoryDbPath, sessionStateDir, sourceDbPath } from './config.ts';
+import { compressorModel, copilotBin, copilotHome, dataDir, describeSettings, memoryDbPath, monthlyBudget, sessionStateDir, sourceDbPath } from './config.ts';
 import { SessionStoreReader } from './capture/session-store-reader.ts';
 import { syncOnce } from './capture/sync.ts';
 import { compressPending } from './compress/compressor.ts';
@@ -377,6 +377,15 @@ async function main(argv: string[]): Promise<number> {
         log,
         embedQuery: createQueryEmbedder(embedderOrWarn(log)),
         settings: () => settingsReport(),
+        usage: (since) => {
+          const reader = new SessionStoreReader(sourceDbPath());
+          try {
+            return reader.readUsage(since);
+          } finally {
+            reader.close();
+          }
+        },
+        budget: () => monthlyBudget(),
       });
       console.log(`copilot-mem viewer: ${viewer.url}  (Ctrl-C to stop)`);
       if (args.includes('--open')) {

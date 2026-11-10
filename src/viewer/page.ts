@@ -64,13 +64,15 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   #log { margin:0; padding:6px 12px; overflow:auto; flex:1; font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; color:#c9d1d9; }
   .empty { padding:24px; color:var(--dim); text-align:center; }
   .more { width:calc(100% - 24px); margin:10px 12px; }
-  .stat.link { cursor:pointer; }
+  .stat.link { cursor:pointer; background:none; border:0; border-radius:0; padding:0; color:inherit; text-align:left; }
+  .stat.link:focus-visible, button.go:focus-visible { outline:1px solid var(--acc); outline-offset:2px; }
   .stat.link:hover b { color:var(--acc); }
   table.grid { border-collapse:collapse; width:100%; margin:4px 0 14px; font-variant-numeric:tabular-nums; font-size:12px; }
   table.grid th, table.grid td { padding:3px 6px; border-bottom:1px solid #21262d; text-align:right; white-space:nowrap; }
   table.grid th { color:var(--dim); font-weight:normal; }
   table.grid th:first-child, table.grid td:first-child { text-align:left; }
   table.grid td.name { max-width:180px; overflow:hidden; text-overflow:ellipsis; }
+  button.go { background:none; border:0; padding:0; color:var(--acc); font:inherit; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   details.turn { border-bottom:1px solid #21262d; padding:4px 0; }
   details.turn summary { cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   details.turn.hl { background:#1f2a3a; }
@@ -128,9 +130,9 @@ export const VIEWER_HTML = String.raw`<!doctype html>
     <input id="calls" type="number" min="1" max="500" value="5" aria-label="Copilot calls">
     <button id="compress" class="primary" disabled>Compress</button>
   </span>
-  <div class="stat link" id="recall" title="Sessions that got copilot-mem context injected or called its tools"><b id="c-recall">&#x2013;</b><span>sessions used memory &#x203a;</span></div>
-  <div class="stat link" id="usage" title="Compression time, tokens and AI credits"><b id="c-credits">&#x2013;</b><span>AI credits used &#x203a;</span></div>
-  <div class="stat link" id="cost" title="AI credits all your Copilot CLI sessions used: by day, model, project and session, with the monthly budget"><b id="c-cost">&#x2013;</b><span>Copilot credits, 30d &#x203a;</span></div>
+  <button type="button" class="stat link" id="recall" title="Sessions that got copilot-mem context injected or called its tools"><b id="c-recall">&#x2013;</b><span>sessions used memory &#x203a;</span></button>
+  <button type="button" class="stat link" id="usage" title="Compression time, tokens and AI credits"><b id="c-credits">&#x2013;</b><span>AI credits used &#x203a;</span></button>
+  <button type="button" class="stat link" id="cost" title="AI credits all your Copilot CLI sessions used: by day, model, project and session, with the monthly budget"><b id="c-cost">&#x2013;</b><span>Copilot credits, 30d &#x203a;</span></button>
   <span id="worker" class="badge">worker: &#x2013;</span>
   <span class="spacer"></span>
   <span id="integration" class="dim"></span>
@@ -580,8 +582,10 @@ function renderCost() {
     costChart(u, colors),
     u.topSessions.length ? [h("h4", null, "Top sessions"), grid(["session", "project", "last day", "calls", "AI credits", "share"],
       u.topSessions.map(function (s) {
-        return h("tr", { class: "pick", title: "Open " + s.id + "\nmodels: " + s.models.join(", "), onclick: function () { openSession(s.id); } },
-          h("td", { class: "name", title: s.name }, s.name), h("td", { class: "name", title: s.repository || s.cwd || "" }, h("bdi", null, s.repository || s.cwd || "\u2013")),
+        var tip = s.name + "\nmodels: " + s.models.join(", ");
+        return h("tr", null,
+          h("td", { class: "name" }, s.synced ? h("button", { type: "button", class: "go", title: "Open " + s.id + "\n" + tip, onclick: function () { openSession(s.id); } }, s.name) :
+            h("span", { title: tip + "\nNot synced into copilot-mem yet" }, s.name)), h("td", { class: "name", title: s.repository || s.cwd || "" }, h("bdi", null, s.repository || s.cwd || "\u2013")),
           h("td", null, s.lastDay), h("td", null, fmt(s.calls)), h("td", null, credits(s.credits)), h("td", null, pct(s.credits, t.credits)));
       }))] : h("p", { class: "dim" }, "No Copilot calls in this period."),
     u.models.length ? [h("h4", null, "By model"), costGroups("model", u.models, t.credits)] : null,
@@ -884,6 +888,9 @@ function onSnapshot(s) {
   state.latest = s.latestObservationId;
   if (state.latest !== null && s.counts.sessions !== state.sessionCount) loadRecall();
   state.sessionCount = s.counts.sessions;
+  // New Copilot turns usually mean new model calls, so refresh the usage totals and budget status.
+  if (state.turnCount !== undefined && c.turns !== state.turnCount) loadCost();
+  state.turnCount = c.turns;
   if (s.latestCallId !== state.latestCall) { state.latestCall = s.latestCallId; loadStats(); }
 }
 

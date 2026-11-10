@@ -302,7 +302,11 @@ export async function startViewer(options: ViewerOptions): Promise<Viewer> {
       } catch (error) {
         budgetError = (error as Error).message;
       }
-      return sendJson(res, 200, { ...summarizeUsage(data, { days, budget, now }), budgetError });
+      const report = summarizeUsage(data, { days, budget, now });
+      // Only sessions already synced into memory.db can be opened in the viewer.
+      const synced = new Set(store.sessionIds());
+      const topSessions = report.topSessions.map((s) => ({ ...s, synced: synced.has(s.id) }));
+      return sendJson(res, 200, { ...report, topSessions, budgetError });
     }
     if (url.pathname === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });

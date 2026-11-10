@@ -104,6 +104,17 @@ describe('viewer', () => {
     assert.match(markup, /placeholder="Filter projects&#x2026;"/);
   });
 
+  test('page: header views and top-session links are keyboard-reachable buttons; usage refreshes on new turns', async () => {
+    const html = await (await fetch(viewer.url)).text();
+    for (const id of ['recall', 'usage', 'cost']) assert.match(html, new RegExp(`<button type="button" class="stat link" id="${id}"`));
+    assert.doesNotMatch(html, /<div class="stat link"/);
+    const cost = html.slice(html.indexOf('function renderCost()'), html.indexOf('\nfunction openSession('));
+    assert.match(cost, /s\.synced \? h\("button", \{ type: "button", class: "go"[^]*openSession\(s\.id\)/);
+    assert.doesNotMatch(cost, /class: "pick"/, 'click-only rows are not keyboard-reachable');
+    const snapshot = html.slice(html.indexOf('function onSnapshot('), html.indexOf('\nfunction connect('));
+    assert.match(snapshot, /c\.turns !== state\.turnCount\) loadCost\(\)/);
+  });
+
   test('page h() skips null children inside arrays instead of printing "null"', () => {
     const html = readFileSync(join(import.meta.dirname, '..', 'src', 'viewer', 'page.ts'), 'utf8');
     const src = html.slice(html.indexOf('function h(tag, props) {'), html.indexOf('\nfunction api('));
@@ -517,7 +528,10 @@ describe('viewer', () => {
       usage: (s) => {
         since = s;
         return {
-          rows: [{ day, session_id: 's1', model: 'm', initiator: 'user', calls: 2, unpriced: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, credits: 4 }],
+          rows: [
+            { day, session_id: 's1', model: 'm', initiator: 'user', calls: 2, unpriced: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, credits: 4 },
+            { day, session_id: 'not-synced', model: 'm', initiator: 'user', calls: 1, unpriced: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, credits: 1 },
+          ],
           sessions: [],
         };
       },
@@ -528,7 +542,9 @@ describe('viewer', () => {
     try {
       const body = await (await fetch(new URL('/api/usage?days=7', usageViewer.url))).json();
       assert.equal(since, usageSince(7));
-      assert.deepEqual([body.available, body.days, body.daily.length, body.totals.credits, body.month.budget], [true, 7, 7, 4, null]);
+      assert.deepEqual([body.available, body.days, body.daily.length, body.totals.credits, body.month.budget], [true, 7, 7, 5, null]);
+      // Sessions not yet synced into memory.db would 404 in the session view, so the page must not link them.
+      assert.deepEqual(body.topSessions.map((s: { id: string; synced: boolean }) => [s.id, s.synced]), [['s1', true], ['not-synced', false]]);
       assert.match(body.budgetError, /MONTHLY_BUDGET/);
       assert.equal((await fetch(new URL('/api/usage?days=91', usageViewer.url))).status, 400);
     } finally {

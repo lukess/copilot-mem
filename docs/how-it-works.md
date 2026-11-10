@@ -127,6 +127,16 @@ A live web viewer (like claude-mem's):
   and confirmation show what this run covers: calls, turns, AI credits and
   time for the selected project (or all), and how many calls clearing it all
   would take.
+- **Copilot credits, 30d** (header): AI credits every Copilot CLI model call
+  used over the last 30 local days, read live (read-only) from
+  `assistant_usage_events` in Copilot's session store: totals, cache-hit rate,
+  a daily chart stacked by model, the top 10 sessions (click to open), and
+  breakdowns by model, project and initiator (user, agent, sub-agent,
+  compaction). This month's spend and month-end projection are compared with
+  `COPILOT_MEM_MONTHLY_BUDGET` when set: the bar and header turn amber when the
+  projection reaches 80% of the budget and red once spend passes it, and the
+  chart shows the daily pace as a dashed line. Copilot versions without that
+  table show "not available".
 - **Settings**: Copilot CLI and integration health (MCP server, skill, hooks,
   worker, auto-compress), the embedding model and how many observations it has
   embedded, every setting with its effective value and source (environment,

@@ -7,6 +7,7 @@ import {
   autoCompressLimit,
   describeSettings,
   loadSettings,
+  monthlyBudget,
   saveSettingsFile,
   SETTING_DEFAULTS,
 } from '../src/config.ts';
@@ -37,6 +38,14 @@ describe('settings', () => {
 
   test('the old COPILOT_MEM_OLLAMA_URL variable still sets the endpoint', () => {
     assert.equal(loadSettings({ COPILOT_MEM_OLLAMA_URL: 'http://gpu:11434' }, path)('COPILOT_MEM_EMBED_URL'), 'http://gpu:11434');
+  });
+
+  test('the monthly budget is off when unset and must be a positive number of credits', () => {
+    assert.equal(monthlyBudget(loadSettings({}, path)), null);
+    assert.equal(monthlyBudget(loadSettings({ COPILOT_MEM_MONTHLY_BUDGET: ' 1500.5 ' }, path)), 1500.5);
+    for (const bad of ['0', '-3', 'lots']) {
+      assert.throws(() => monthlyBudget(loadSettings({ COPILOT_MEM_MONTHLY_BUDGET: bad }, path)), /must be a positive number/);
+    }
   });
 
   test('a malformed file is reported with its path', () => {

@@ -8,6 +8,7 @@ import { autoCompressLimit } from '../src/config.ts';
 import { settingsReport, tailLines } from '../src/status.ts';
 import { MemoryStore, type Observation } from '../src/storage/memory-store.ts';
 import { startViewer, type Viewer } from '../src/viewer/server.ts';
+import { summarizeUsage, usageSince, type UsageRow } from '../src/usage.ts';
 import { workerFiles } from '../src/worker/worker.ts';
 
 let dir: string;
@@ -101,6 +102,17 @@ describe('viewer', () => {
     const markup = html.slice(0, html.indexOf('<script>'));
     assert.doesNotMatch(markup, /\\u[0-9a-f]{4}/i);
     assert.match(markup, /placeholder="Filter projects&#x2026;"/);
+  });
+
+  test('page: header views and top-session links are keyboard-reachable buttons; usage refreshes on new turns', async () => {
+    const html = await (await fetch(viewer.url)).text();
+    for (const id of ['recall', 'usage', 'cost']) assert.match(html, new RegExp(`<button type="button" class="stat link" id="${id}"`));
+    assert.doesNotMatch(html, /<div class="stat link"/);
+    const cost = html.slice(html.indexOf('function renderCost()'), html.indexOf('\nfunction openSession('));
+    assert.match(cost, /s\.synced \? h\("button", \{ type: "button", class: "go"[^]*openSession\(s\.id\)/);
+    assert.doesNotMatch(cost, /class: "pick"/, 'click-only rows are not keyboard-reachable');
+    const snapshot = html.slice(html.indexOf('function onSnapshot('), html.indexOf('\nfunction connect('));
+    assert.match(snapshot, /c\.turns !== state\.turnCount\) loadCost\(\)/);
   });
 
   test('page h() skips null children inside arrays instead of printing "null"', () => {
@@ -462,6 +474,82 @@ describe('viewer', () => {
     assert.deepEqual(estimate(1), { need: 1, calls: 1, turns: 1, credits: 0.03, ms: 5000 });
     assert.equal(estimate(0), null);
     assert.equal(new Function('state', `${src}; return estimate;`)({ stats: { backlog: null } })(10), null, 'unknown before any measured call');
+  });
+
+  test('summarizes Copilot usage: window totals, empty days, breakdowns, top sessions and month budget status', () => {
+    const row = (day: string, session_id: string, model: string, initiator: string, credits: number, extra: Partial<UsageRow> = {}): UsageRow => ({
+      day, session_id, model, initiator, credits, calls: 1, unpriced: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, ...extra,
+    });
+    const data = {
+      rows: [
+        row('2026-10-31', 's1', 'm1', 'user', 100),
+        row('2026-11-01', 's1', 'm1', 'user', 10),
+        row('2026-11-13', 's1', 'm1', 'user', 2, { calls: 3, unpriced: 1, input_tokens: 100, cache_read_tokens: 40 }),
+        row('2026-11-15', 's2', 'm2', 'agent', 5, { input_tokens: 100 }),
+        row('2026-11-15', 's1', 'm2', 'user', 1),
+      ],
+      sessions: [{ id: 's1', repository: 'acme/api', cwd: '/w/api', summary: 'Fix retries' }],
+    };
+    const now = new Date(2026, 10, 15, 12);
+    const report = summarizeUsage(data, { days: 3, budget: 40, now });
+    assert.deepEqual([report.from, report.to], ['2026-11-13', '2026-11-15']);
+    assert.deepEqual(report.totals, { credits: 8, calls: 5, unpricedCalls: 1, inputTokens: 200, outputTokens: 0, cacheReadTokens: 40 });
+    assert.deepEqual(report.daily.map((d) => [d.day, d.credits, d.models]), [
+      ['2026-11-13', 2, { m1: 2 }],
+      ['2026-11-14', 0, {}],
+      ['2026-11-15', 6, { m2: 6 }],
+    ]);
+    assert.deepEqual(report.models, [{ name: 'm2', credits: 6, calls: 2 }, { name: 'm1', credits: 2, calls: 3 }]);
+    assert.deepEqual(report.initiators.map((g) => [g.name, g.credits]), [['agent', 5], ['user', 3]]);
+    assert.deepEqual(report.repositories.map((g) => [g.name, g.credits]), [['(unknown)', 5], ['acme/api', 3]]);
+    assert.deepEqual(report.topSessions.map((s) => [s.id, s.name, s.credits, s.models, s.lastDay]), [
+      ['s2', 's2', 5, ['m2'], '2026-11-15'],
+      ['s1', 'Fix retries', 3, ['m1', 'm2'], '2026-11-15'],
+    ]);
+    // November so far: 10 + 2 + 5 + 1 = 18 in 15 of 30 days -> 36 projected.
+    assert.deepEqual(report.month, { month: '2026-11', credits: 18, daysElapsed: 15, daysInMonth: 30, projected: 36, budget: 40, status: 'warn' });
+    assert.equal(summarizeUsage(data, { days: 3, budget: 100, now }).month.status, 'ok');
+    assert.equal(summarizeUsage(data, { days: 3, budget: 15, now }).month.status, 'over');
+    assert.equal(summarizeUsage(data, { days: 3, budget: null, now }).month.status, null);
+    assert.equal(usageSince(3, now), new Date(2026, 10, 1).toISOString(), 'reaches back to the 1st for the month total');
+    assert.equal(usageSince(30, now), new Date(2026, 9, 17).toISOString());
+  });
+
+  test('usage route: unavailable without a source; reports a bad budget setting instead of failing', async () => {
+    assert.deepEqual((await get('/api/usage')).body.available, false);
+    const today = new Date();
+    const day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    let since = '';
+    const usageViewer = await startViewer({
+      port: 0,
+      files: workerFiles(dir),
+      openStore: () => new MemoryStore(dbPath),
+      status: () => ({}),
+      usage: (s) => {
+        since = s;
+        return {
+          rows: [
+            { day, session_id: 's1', model: 'm', initiator: 'user', calls: 2, unpriced: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, credits: 4 },
+            { day, session_id: 'not-synced', model: 'm', initiator: 'user', calls: 1, unpriced: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, credits: 1 },
+          ],
+          sessions: [],
+        };
+      },
+      budget: () => {
+        throw new Error('COPILOT_MEM_MONTHLY_BUDGET must be a positive number of AI credits');
+      },
+    });
+    try {
+      const body = await (await fetch(new URL('/api/usage?days=7', usageViewer.url))).json();
+      assert.equal(since, usageSince(7));
+      assert.deepEqual([body.available, body.days, body.daily.length, body.totals.credits, body.month.budget], [true, 7, 7, 5, null]);
+      // Sessions not yet synced into memory.db would 404 in the session view, so the page must not link them.
+      assert.deepEqual(body.topSessions.map((s: { id: string; synced: boolean }) => [s.id, s.synced]), [['s1', true], ['not-synced', false]]);
+      assert.match(body.budgetError, /MONTHLY_BUDGET/);
+      assert.equal((await fetch(new URL('/api/usage?days=91', usageViewer.url))).status, 400);
+    } finally {
+      await usageViewer.close();
+    }
   });
 
   test('rejects bad input and unknown routes with JSON errors', async () => {

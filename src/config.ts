@@ -30,6 +30,8 @@ export const SETTING_DEFAULTS = {
   COPILOT_MEM_EMBED_URL: '',
   /** API key for cloud providers (not needed for local or ollama). */
   COPILOT_MEM_EMBED_API_KEY: '',
+  /** Monthly Copilot AI-credit budget for the viewer's Copilot usage view; '' = no budget. */
+  COPILOT_MEM_MONTHLY_BUDGET: '',
 };
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS;
@@ -155,4 +157,13 @@ export function autoCompressLimit(settings = loadSettings()): number {
   const limit = Number(settings('COPILOT_MEM_AUTO_COMPRESS'));
   if (!Number.isInteger(limit) || limit < 0) throw new Error('COPILOT_MEM_AUTO_COMPRESS must be a non-negative integer');
   return limit;
+}
+
+/** Monthly AI-credit budget, or null when unset. */
+export function monthlyBudget(settings = loadSettings()): number | null {
+  const raw = settings('COPILOT_MEM_MONTHLY_BUDGET').trim();
+  if (!raw) return null;
+  const budget = Number(raw);
+  if (!Number.isFinite(budget) || budget <= 0) throw new Error('COPILOT_MEM_MONTHLY_BUDGET must be a positive number of AI credits');
+  return budget;
 }
